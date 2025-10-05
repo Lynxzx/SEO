@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura SEO Analyzer - Local Version</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-bg { background: linear-gradient(135deg, #1e3a8a, #3b82f6); }
+        .card { background-color: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        .loader { border: 4px solid rgba(255, 255, 255, 0.3); border-left-color: #ffffff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .input-tab-active { background-color: #3b82f6; color: white; }
+        .input-tab-inactive { background-color: rgba(255, 255, 255, 0.1); color: #d1d5db; }
+        .tab-active { background-color: #3b82f6; color: white; }
+        .tab-inactive { background-color: rgba(255, 255, 255, 0.1); color: #d1d5db; }
+        #pageDetailsTable tbody tr { cursor: pointer; transition: background-color 0.2s; }
+        #pageDetailsTable tbody tr:hover { background-color: rgba(59, 130, 246, 0.2); }
+        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; z-index: 50; }
+        .modal-content { max-height: 90vh; overflow-y: auto; }
+        .score-circle {
+            position: relative; width: 120px; height: 120px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            background: conic-gradient(var(--color, #10b981) var(--score-percent, 0%), rgba(255, 255, 255, 0.2) var(--score-percent, 0%) 100%);
+        }
+        .score-circle-inner { width: 95px; height: 95px; background-color: #1e3a8a; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+        .graph-tooltip { position: absolute; text-align: center; width: auto; padding: 8px; font: 12px sans-serif; background: #2d3748; border: 0px; border-radius: 8px; pointer-events: none; color: white; }
+    </style>
+</head>
+<body class="gradient-bg text-white min-h-screen flex flex-col items-center p-4">
+
+    <div class="w-full max-w-6xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold mb-2">Aura SEO Analyzer</h1>
+            <p class="text-lg text-blue-200">A local tool to analyze your website's on-page SEO.</p>
+        </header>
+
+        <div id="inputSection" class="card rounded-xl p-6 mb-8 shadow-2xl">
+            <div class="flex border-b border-blue-400 border-opacity-30 mb-4">
+                <button id="urlModeBtn" class="input-tab-btn input-tab-active font-semibold py-2 px-4 rounded-t-lg">Analyze from URL</button>
+                <button id="pasteModeBtn" class="input-tab-btn input-tab-inactive font-semibold py-2 px-4 rounded-t-lg">Paste Sitemap Content</button>
+            </div>
+            <div id="urlInputContainer">
+                <div class="flex flex-col sm:flex-row gap-4">
+                    <input id="urlInput" type="url" placeholder="https://example.com/sitemap.xml" class="flex-grow bg-gray-900 bg-opacity-50 border-2 border-blue-400 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300 transition duration-300">
+                    <button id="analyzeBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transition duration-300 transform hover:scale-105">Analyze Sitemap</button>
+                </div>
+            </div>
+            <div id="pasteInputContainer" class="hidden">
+                 <textarea id="sitemapTextInput" class="w-full h-48 bg-gray-900 bg-opacity-50 border-2 border-blue-400 rounded-lg p-4 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300 transition duration-300" placeholder="Paste the full content of your sitemap.xml file here..."></textarea>
+                 <button id="analyzePasteBtn" class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-lg transition duration-300 transform hover:scale-105">Analyze Pasted Content</button>
+            </div>
+        </div>
+
+        <div id="resultsContainer" class="hidden">
+            <div id="loadingState" class="flex flex-col items-center justify-center card rounded-xl p-8">
+                <div class="loader mb-4"></div>
+                <p id="loadingText" class="text-xl font-semibold text-blue-200 text-center"></p>
+                <button id="cancelAnalysisBtn" class="hidden mt-6 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg">Cancel Analysis</button>
+            </div>
+            <div id="errorState" class="hidden card rounded-xl p-8 text-center bg-red-500 bg-opacity-30">
+                 <h3 class="text-2xl font-bold mb-2 text-red-200">Analysis Failed</h3>
+                 <p id="errorMessage" class="text-red-200"></p>
+            </div>
+            <div id="dataDisplay" class="hidden">
+                <div class="card rounded-xl p-4 sm:p-6 shadow-2xl">
+                    <div class="flex flex-wrap justify-center sm:justify-start border-b border-blue-400 border-opacity-50 mb-6">
+                        <button class="tab-btn tab-active py-2 px-4 rounded-t-lg" data-tab="overview">Site Overview</button>
+                        <button class="tab-btn tab-inactive py-2 px-4 rounded-t-lg" data-tab="pagedetails">Crawled Pages</button>
+                        <button class="tab-btn tab-inactive py-2 px-4 rounded-t-lg" data-tab="clusters">Content Clusters</button>
+                        <button class="tab-btn tab-inactive py-2 px-4 rounded-t-lg" data-tab="sitemap">Site Map</button>
+                    </div>
+                    <div id="tab-content">
+                        <div id="overview" class="tab-pane">
+                            <div class="grid lg:grid-cols-3 gap-6 text-center">
+                                <div class="flex flex-col items-center"><h3 class="text-xl font-bold mb-3 text-blue-200">Overall SEO Score</h3><div id="seoScoreCircle" class="score-circle"><div class="score-circle-inner"><span id="seoScore" class="text-3xl font-bold">0</span></div></div></div>
+                                <div class="flex flex-col items-center"><h3 class="text-xl font-bold mb-3 text-blue-200">Avg. Content Score</h3><div id="contentScoreCircle" class="score-circle"><div class="score-circle-inner"><span id="contentScore" class="text-3xl font-bold">0</span></div></div></div>
+                                <div class="flex flex-col items-center"><h3 class="text-xl font-bold mb-3 text-blue-200">Avg. Semantic Score</h3><div id="semanticScoreCircle" class="score-circle"><div class="score-circle-inner"><span id="semanticScore" class="text-3xl font-bold">0</span></div></div></div>
+                            </div>
+                            <hr class="my-8 border-blue-400 border-opacity-30">
+                            <div>
+                                <h3 class="text-2xl font-bold mb-4 text-blue-200">Prioritized Recommendations</h3>
+                                <div id="recommendationsContainer" class="space-y-4"></div>
+                            </div>
+                        </div>
+                        <div id="pagedetails" class="tab-pane hidden">
+                            <div class="overflow-x-auto">
+                                <table id="pageDetailsTable" class="w-full text-left">
+                                    <thead class="bg-black bg-opacity-20"><tr><th class="p-3">URL</th><th class="p-3 text-center">SEO Score</th><th class="p-3 text-center">Content Score</th><th class="p-3 text-center">Semantic Score</th><th class="p-3">Issues</th></tr></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div id="clusters" class="tab-pane hidden space-y-8">
+                            <!-- Cluster data will be rendered here -->
+                        </div>
+                         <div id="sitemap" class="tab-pane hidden">
+                             <h3 class="text-2xl font-bold mb-6 text-blue-200 text-center">Site Structure Map</h3>
+                             <p class="text-center text-blue-200 mb-4">This graph visualizes your site's internal linking structure. Drag nodes to explore.</p>
+                             <div id="legend" class="flex justify-center gap-4 mb-4"></div>
+                             <div id="network-graph" class="w-full h-[600px] bg-black bg-opacity-20 rounded-lg relative"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="preAnalysisModal" class="modal-backdrop hidden"><div class="card rounded-xl p-8 shadow-2xl w-full max-w-md text-center"><h3 class="text-2xl font-bold mb-4 text-blue-200">Sitemap Found!</h3><p id="urlCountText" class="text-lg mb-2"></p><p id="timeEstimateText" class="text-lg mb-6"></p><div class="flex justify-center gap-4"><button id="cancelPreAnalysisBtn" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-lg">Cancel</button><button id="startAnalysisBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg">Start Analysis</button></div></div></div>
+    
+    <div id="pageDetailModal" class="modal-backdrop hidden"><div class="card rounded-xl p-6 shadow-2xl w-full max-w-5xl modal-content relative"><button id="closeModalBtn" class="absolute top-4 right-4 text-white text-2xl font-bold">&times;</button><h3 class="text-2xl font-bold mb-4 text-blue-200" id="modalTitle">Page Details</h3><div id="modalBody" class="space-y-4"></div></div></div>
+
+    <script>
+        // --- State ---
+        let fullAnalysisData = { pageReports: [] };
+        let sitemapUrls = [];
+        let isAnalysisCancelled = false;
+        let aggregatedData = {};
+
+        // --- DOM Elements ---
+        const urlInput = document.getElementById('urlInput');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const analyzePasteBtn = document.getElementById('analyzePasteBtn');
+        const sitemapTextInput = document.getElementById('sitemapTextInput');
+        const urlModeBtn = document.getElementById('urlModeBtn');
+        const pasteModeBtn = document.getElementById('pasteModeBtn');
+        const urlInputContainer = document.getElementById('urlInputContainer');
+        const pasteInputContainer = document.getElementById('pasteInputContainer');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const loadingState = document.getElementById('loadingState');
+        const loadingText = document.getElementById('loadingText');
+        const errorState = document.getElementById('errorState');
+        const errorMessage = document.getElementById('errorMessage');
+        const dataDisplay = document.getElementById('dataDisplay');
+        const preAnalysisModal = document.getElementById('preAnalysisModal');
+        const startAnalysisBtn = document.getElementById('startAnalysisBtn');
+        const cancelPreAnalysisBtn = document.getElementById('cancelPreAnalysisBtn');
+        const cancelAnalysisBtn = document.getElementById('cancelAnalysisBtn');
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        const pageDetailModal = document.getElementById('pageDetailModal');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+
+        // --- Event Listeners ---
+        analyzeBtn.addEventListener('click', () => handleSitemapCheck('url'));
+        analyzePasteBtn.addEventListener('click', () => handleSitemapCheck('paste'));
+        startAnalysisBtn.addEventListener('click', runFullAnalysis);
+        cancelPreAnalysisBtn.addEventListener('click', () => preAnalysisModal.classList.add('hidden'));
+        cancelAnalysisBtn.addEventListener('click', () => { isAnalysisCancelled = true; });
+        closeModalBtn.addEventListener('click', () => pageDetailModal.classList.add('hidden'));
+        pageDetailModal.addEventListener('click', (e) => {
+            if (e.target === pageDetailModal) pageDetailModal.classList.add('hidden');
+        });
+
+
+        urlModeBtn.addEventListener('click', () => switchInputMode('url'));
+        pasteModeBtn.addEventListener('click', () => switchInputMode('paste'));
+
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.replace('tab-active', 'tab-inactive'));
+                document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+                btn.classList.replace('tab-inactive', 'tab-active');
+                const tabId = btn.dataset.tab;
+                document.getElementById(tabId).classList.remove('hidden');
+                if (tabId === 'sitemap' && aggregatedData.networkGraph) {
+                    renderNetworkGraph(aggregatedData.networkGraph);
+                }
+            });
+        });
+
+        // --- Main Logic ---
+        function switchInputMode(mode) {
+            if (mode === 'url') {
+                urlModeBtn.classList.replace('input-tab-inactive', 'input-tab-active');
+                pasteModeBtn.classList.replace('input-tab-active', 'input-tab-inactive');
+                urlInputContainer.classList.remove('hidden');
+                pasteInputContainer.classList.add('hidden');
+            } else {
+                pasteModeBtn.classList.replace('input-tab-inactive', 'input-tab-active');
+                urlModeBtn.classList.replace('input-tab-active', 'input-tab-inactive');
+                pasteInputContainer.classList.remove('hidden');
+                urlInputContainer.classList.add('hidden');
+            }
+        }
+
+        async function handleSitemapCheck(mode) {
+            resetUI();
+            loadingText.textContent = "Parsing sitemap...";
+            
+            try {
+                let response;
+                if (mode === 'url') {
+                    const url = urlInput.value.trim();
+                    if (!url) throw new Error("Please enter a sitemap URL.");
+                    response = await fetch(`http://localhost:3000/api/sitemap?url=${encodeURIComponent(url)}`);
+                } else {
+                    const sitemapText = sitemapTextInput.value.trim();
+                    if (!sitemapText) throw new Error("Please paste sitemap content.");
+                    response = await fetch('http://localhost:3000/api/sitemap-text', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sitemapText })
+                    });
+                }
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || `Request failed with status ${response.status}`);
+                }
+                
+                sitemapUrls = await response.json();
+
+                if (sitemapUrls.length === 0) {
+                    throw new Error("No URLs found in the sitemap.");
+                }
+                
+                document.getElementById('urlCountText').textContent = `Found ${sitemapUrls.length} URLs.`;
+                const estimatedMinutes = Math.ceil((sitemapUrls.length * 0.5) / 60);
+                document.getElementById('timeEstimateText').textContent = `Estimated analysis time: ~${estimatedMinutes} minute(s).`;
+                loadingState.classList.add('hidden');
+                preAnalysisModal.classList.remove('hidden');
+
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function runFullAnalysis() {
+            preAnalysisModal.classList.add('hidden');
+            loadingState.classList.remove('hidden');
+            cancelAnalysisBtn.classList.remove('hidden');
+            isAnalysisCancelled = false;
+            let rawPageReports = [];
+
+            const BATCH_SIZE = 10;
+            const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+            for (let i = 0; i < sitemapUrls.length; i += BATCH_SIZE) {
+                if (isAnalysisCancelled) {
+                    loadingText.textContent = "Analysis cancelled by user.";
+                    cancelAnalysisBtn.classList.add('hidden');
+                    return;
+                }
+                
+                const batch = sitemapUrls.slice(i, i + BATCH_SIZE);
+                const batchNumber = (i / BATCH_SIZE) + 1;
+                const totalBatches = Math.ceil(sitemapUrls.length / BATCH_SIZE);
+
+                loadingText.innerHTML = `Analyzing batch ${batchNumber} of ${totalBatches}...<br><span class="text-sm">(${i + batch.length} of ${sitemapUrls.length} pages)</span>`;
+                
+                try {
+                    const response = await fetch('http://localhost:3000/api/analyze-batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ urls: batch })
+                    });
+                    if (!response.ok) throw new Error(`Batch analysis failed with status ${response.status}`);
+                    const reports = await response.json();
+                    rawPageReports.push(...reports);
+                } catch (pageError) {
+                     console.error(`Failed to analyze batch ${batchNumber}:`, pageError);
+                     batch.forEach(url => {
+                         rawPageReports.push({ url, error: true });
+                     });
+                }
+                await delay(200);
+            }
+            
+            cancelAnalysisBtn.classList.add('hidden');
+            loadingText.textContent = "Aggregating results and identifying clusters...";
+            
+            try {
+                const response = await fetch('http://localhost:3000/api/aggregate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pageReports: rawPageReports })
+                });
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || `Aggregation failed with status ${response.status}`);
+                }
+                aggregatedData = await response.json();
+                fullAnalysisData.pageReports = aggregatedData.pageReports;
+                renderResults(aggregatedData);
+            } catch (error) {
+                showError(error.message);
+                return;
+            }
+
+            loadingState.classList.add('hidden');
+            dataDisplay.classList.remove('hidden');
+        }
+
+        // --- Rendering Functions ---
+        function renderResults(data) {
+            renderScoreCircle('seoScore', data.finalSeoScore, '#10b981');
+            renderScoreCircle('contentScore', data.avgContentScore, '#3b82f6');
+            renderScoreCircle('semanticScore', data.avgSemanticScore, '#f59e0b');
+
+            const recContainer = document.getElementById('recommendationsContainer');
+            recContainer.innerHTML = '';
+            const priorityStyles = { High: 'bg-red-500 border-red-400', Medium: 'bg-yellow-500 border-yellow-400', Low: 'bg-green-500 border-green-400' };
+            data.prioritizedRecommendations.forEach(rec => {
+                const styles = priorityStyles[rec.priority] || priorityStyles.Low;
+                recContainer.innerHTML += `<div class="p-4 rounded-lg border-l-4 ${styles} bg-opacity-20"><div class="flex justify-between items-center mb-2"><h4 class="font-bold text-lg">${rec.area}</h4><span class="font-semibold px-3 py-1 rounded-full text-sm ${styles} bg-opacity-40">${rec.priority}</span></div><p>${rec.recommendation}</p></div>`;
+            });
+
+            const tableBody = document.querySelector('#pageDetailsTable tbody');
+            tableBody.innerHTML = '';
+            fullAnalysisData.pageReports.forEach((report, index) => {
+                const row = document.createElement('tr');
+                row.dataset.pageIndex = index;
+                const issueText = report.issues?.join(', ') || (report.error ? '<span class="text-red-400">Analysis Failed</span>' : '<span class="text-green-300">No major issues</span>');
+                row.innerHTML = `
+                    <td class="p-3 break-all">${report.url}</td>
+                    <td class="p-3 text-center">${report.seoScore ?? 'N/A'}</td>
+                    <td class="p-3 text-center">${report.contentScore ?? 'N/A'}</td>
+                    <td class="p-3 text-center">${report.semanticScore ?? 'N/A'}</td>
+                    <td class="p-3">${issueText}</td>`;
+                row.addEventListener('click', () => showPageDetailModal(index));
+                tableBody.appendChild(row);
+            });
+            
+            renderClusters(data);
+        }
+        
+        function renderClusters(data) {
+            const container = document.getElementById('clusters');
+            container.innerHTML = '';
+
+            if (data.contentClusters && data.contentClusters.length > 0) {
+                data.contentClusters.forEach(cluster => {
+                    const clusterEl = document.createElement('div');
+                    clusterEl.className = 'bg-black bg-opacity-20 p-6 rounded-lg';
+                    
+                    let clusterPagesHtml = '<p class="text-gray-400">No supporting cluster pages found.</p>';
+                    if(cluster.clusterPages.length > 0) {
+                        clusterPagesHtml = cluster.clusterPages.map(page => `
+                            <li class="flex items-center">
+                                <span class="text-green-400 mr-2">↳</span>
+                                <a href="${page.url}" target="_blank" class="hover:underline">${page.title || page.url}</a>
+                            </li>
+                        `).join('');
+                    }
+
+                    clusterEl.innerHTML = `
+                        <h3 class="text-2xl font-bold text-blue-300 mb-2">Pillar: ${cluster.pillarTitle}</h3>
+                        <a href="${cluster.pillarUrl}" target="_blank" class="text-sm text-gray-400 hover:underline mb-4 block">${cluster.pillarUrl}</a>
+                        <h4 class="text-lg font-semibold mt-4 mb-2">Cluster Pages (${cluster.clusterPages.length}):</h4>
+                        <ul class="space-y-2 pl-4">
+                           ${clusterPagesHtml}
+                        </ul>
+                    `;
+                    container.appendChild(clusterEl);
+                });
+            }
+
+             if (data.unclusteredPages && data.unclusteredPages.length > 0) {
+                const unclusteredEl = document.createElement('div');
+                unclusteredEl.className = 'bg-black bg-opacity-20 p-6 rounded-lg';
+                const unclusteredPagesHtml = data.unclusteredPages.map(page => `
+                    <li class="flex items-center">
+                        <span class="text-yellow-400 mr-2">!</span>
+                        <a href="${page.url}" target="_blank" class="hover:underline">${page.title || page.url}</a>
+                    </li>
+                `).join('');
+                unclusteredEl.innerHTML = `
+                    <h3 class="text-2xl font-bold text-yellow-300 mb-2">Orphaned or Unclustered Pages</h3>
+                    <p class="mb-4">These pages could not be grouped into a topic cluster. They may be missing internal links to a relevant pillar page.</p>
+                    <ul class="space-y-2 pl-4">${unclusteredPagesHtml}</ul>
+                `;
+                container.appendChild(unclusteredEl);
+             }
+        }
+        
+        function renderScoreCircle(elementId, score, color) {
+            const scoreEl = document.getElementById(elementId);
+            const circleEl = document.getElementById(elementId + 'Circle');
+            if (scoreEl && circleEl) {
+                scoreEl.textContent = score;
+                circleEl.style.setProperty('--score-percent', `${score}%`);
+                circleEl.style.setProperty('--color', color);
+            }
+        }
+        
+        function showPageDetailModal(pageIndex) {
+            const report = fullAnalysisData.pageReports[pageIndex];
+            if (!report || report.error) return;
+
+            document.getElementById('modalTitle').textContent = `Report for: ${report.url}`;
+            const modalBody = document.getElementById('modalBody');
+            
+            let keywordHtml = '<div><h4 class="font-bold text-lg mb-2 text-blue-300">Top Keywords</h4><p class="font-mono text-sm">No keywords found.</p></div>';
+            if (report.keywords && report.keywords.length > 0) {
+                keywordHtml = `
+                    <div>
+                        <h4 class="font-bold text-lg mb-2 text-blue-300">Top Keywords</h4>
+                        <div class="flex flex-wrap gap-2">
+                            ${report.keywords.map(kw => `<span class="bg-blue-500 bg-opacity-70 rounded-full px-3 py-1 text-sm">${kw.keyword} (${kw.frequency})</span>`).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            let missingAltHtml = '';
+            if (report.imagesMissingAltSrc && report.imagesMissingAltSrc.length > 0) {
+                missingAltHtml = `
+                    <h5 class="font-semibold mt-2 text-yellow-300">Images to fix:</h5>
+                    <ul class="list-disc list-inside text-xs font-mono break-all max-h-24 overflow-y-auto">
+                        ${report.imagesMissingAltSrc.map(src => `<li>${src}</li>`).join('')}
+                    </ul>
+                `;
+            }
+            
+            let recommendationsHtml = '<p class="text-gray-400">No specific recommendations for this page. Looks good!</p>';
+            if(report.pageSpecificRecommendations && report.pageSpecificRecommendations.length > 0) {
+                recommendationsHtml = `
+                    <ul class="list-disc list-inside font-mono text-sm text-yellow-300 space-y-1">
+                        ${report.pageSpecificRecommendations.map(rec => `<li>${rec}</li>`).join('')}
+                    </ul>
+                `;
+            }
+
+            modalBody.innerHTML = `
+                <div class="grid lg:grid-cols-3 gap-4">
+                    <div class="space-y-4">
+                        <div class="bg-black bg-opacity-20 p-4 rounded-lg">
+                            <h4 class="font-bold text-lg mb-2 text-blue-300">Core On-Page</h4>
+                            <p class="font-mono text-sm break-all"><b>Title:</b> ${report.pageTitle || "Not Found"}</p>
+                            <p class="font-mono text-sm break-all mt-2"><b>Meta Desc:</b> ${report.metaDescription || "Not Found"}</p>
+                            <p class="font-mono text-sm break-all mt-2"><b>H1 Tags:</b> ${report.h1Tags.length > 0 ? report.h1Tags.join(', ') : 'None Found'}</p>
+                        </div>
+                        <div class="bg-black bg-opacity-20 p-4 rounded-lg">
+                            <h4 class="font-bold text-lg mb-2 text-blue-300">Link Stats</h4>
+                            <p class="font-mono text-sm">Internal Links: ${report.internalLinks.length}</p>
+                            <p class="font-mono text-sm">External Links: ${report.externalLinkCount}</p>
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="bg-black bg-opacity-20 p-4 rounded-lg">
+                            <h4 class="font-bold text-lg mb-2 text-blue-300">Image SEO</h4>
+                            <p class="font-mono text-sm">Total Images: ${report.totalImages}</p>
+                            <p class="font-mono text-sm">Missing Alt Text: <span class="${report.imagesMissingAlt > 0 ? 'text-red-400' : 'text-green-300'}">${report.imagesMissingAlt}</span></p>
+                            ${missingAltHtml}
+                        </div>
+                        <div class="bg-black bg-opacity-20 p-4 rounded-lg">
+                            <h4 class="font-bold text-lg mb-2 text-blue-300">Actionable Recommendations</h4>
+                            ${recommendationsHtml}
+                        </div>
+                    </div>
+                    <div class="space-y-4 lg:col-span-1">
+                         <div class="bg-black bg-opacity-20 p-4 rounded-lg h-full">
+                            ${keywordHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+            pageDetailModal.classList.remove('hidden');
+        }
+        
+        function renderNetworkGraph(graphData) {
+            const graphContainer = d3.select("#network-graph");
+            graphContainer.html(""); // Clear previous graph
+
+            const width = graphContainer.node().getBoundingClientRect().width;
+            const height = 600;
+
+            const svg = graphContainer.append("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .call(d3.zoom().on("zoom", (event) => g.attr("transform", event.transform)))
+                .append("g");
+            
+            const g = svg.append("g");
+
+            const tooltip = d3.select("body").append("div")
+                .attr("class", "graph-tooltip")
+                .style("opacity", 0);
+
+            const { nodes, links } = graphData;
+            const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+            const legendData = [
+                { group: 1, text: 'Home Page', color: color(1) },
+                { group: 2, text: 'Category Page', color: color(2) },
+                { group: 3, text: 'Product/Leaf Page', color: color(3) }
+            ];
+
+            const legend = d3.select("#legend");
+            legend.html("");
+            legendData.forEach(item => {
+                legend.append("span").style("color", item.color).text("●").style("font-size", "20px").style("margin-right", "5px");
+                legend.append("span").text(item.text).style("margin-right", "20px");
+            });
+
+            const simulation = d3.forceSimulation(nodes)
+                .force("link", d3.forceLink(links).id(d => d.id).distance(70))
+                .force("charge", d3.forceManyBody().strength(-100))
+                .force("center", d3.forceCenter(width / 2, height / 2));
+
+            const link = g.append("g")
+                .attr("stroke", "#999")
+                .attr("stroke-opacity", 0.6)
+                .selectAll("line")
+                .data(links)
+                .join("line")
+                .attr("stroke-width", 1);
+
+            const node = g.append("g")
+                .attr("stroke", "#fff")
+                .attr("stroke-width", 1.5)
+                .selectAll("circle")
+                .data(nodes)
+                .join("circle")
+                .attr("r", d => 5 + Math.min(d.incomingLinks / 2, 10))
+                .attr("fill", d => color(d.group))
+                .call(drag(simulation))
+                .on("mouseover", (event, d) => {
+                    tooltip.transition().duration(200).style("opacity", .9);
+                    tooltip.html(`${d.id}<br/>Incoming Links: ${d.incomingLinks}`)
+                        .style("left", (event.pageX + 5) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", () => {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                });
+
+            simulation.on("tick", () => {
+                link.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+                node.attr("cx", d => d.x).attr("cy", d => d.y);
+            });
+
+            function drag(simulation) {
+                function dragstarted(event) {
+                    if (!event.active) simulation.alphaTarget(0.3).restart();
+                    event.subject.fx = event.subject.x;
+                    event.subject.fy = event.subject.y;
+                }
+                function dragged(event) {
+                    event.subject.fx = event.x;
+                    event.subject.fy = event.y;
+                }
+                function dragended(event) {
+                    if (!event.active) simulation.alphaTarget(0);
+                    event.subject.fx = null;
+                    event.subject.fy = null;
+                }
+                return d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended);
+            }
+        }
+
+
+        // --- UI Utility Functions ---
+        function resetUI() {
+            errorState.classList.add('hidden');
+            dataDisplay.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
+            loadingState.classList.remove('hidden');
+            cancelAnalysisBtn.classList.add('hidden');
+        }
+        function isValidUrl(string) { try { new URL(string); return true; } catch (_) { return false; } }
+        function showError(message) {
+            loadingState.classList.add('hidden');
+            dataDisplay.classList.add('hidden');
+            errorState.classList.remove('hidden');
+            errorMessage.textContent = message;
+        }
+    </script>
+</body>
+</html>
